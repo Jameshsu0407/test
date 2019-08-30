@@ -1,0 +1,102 @@
+--1.請列出每個借閱人每年借書數量，並依借閱人編號和年度做排序
+SELECT  
+ mm.USER_ID AS [KeeperId],
+ mm.USER_CNAME AS [CName],
+ mm.USER_ENAME AS [EName],
+ YEAR(blr.LEND_DATE)AS [BorrowYear],
+ COUNT(YEAR(blr.LEND_DATE)) AS [BorrowCnt]  --從LEND_DATE裡計算該年裡借書次數
+FROM BOOK_LEND_RECORD blr,MEMBER_M mm
+WHERE blr.KEEPER_ID = [mm.USER_ID]
+GROUP BY mm.USER_ID,mm.USER_CNAME,mm.USER_ENAME,YEAR(blr.LEND_DATE) --YEAR()要寫進去不然會把同是該年卻不同月分開算
+ORDER BY mm.USER_ID,[Borrow Year];
+
+--2.列出最受歡迎的書前五名(借閱數量最多前五名)
+SELECT TOP (5) --WITH TIES 同分也會列進去
+ bd.BOOK_ID AS [BookId], --取前幾是先選好再排序最後才對號入座
+ bd.BOOK_NAME AS [BookName],
+ COUNT(blr.CRE_DATE) AS [QTY]
+FROM BOOK_LEND_RECORD blr,BOOK_DATA bd
+WHERE bd.BOOK_ID=blr.BOOK_ID
+GROUP BY bd.BOOK_ID,bd.BOOK_NAME
+ORDER BY QTY DESC;
+
+--3.以一季列出2019年每一季書籍借閱書量
+SELECT 
+CASE DATEPART(QUARTER,blr.LEND_DATE) --datepart以quarter分四份
+	WHEN 1 THEN '2019/01~2019/03' --join Span_Table
+	WHEN 2 THEN '2019/04~2019/06'
+	WHEN 3 THEN '2019/07~2019/09'
+	WHEN 4 THEN '2019/10~2019/12'
+	END AS [Quarter],
+	COUNT(blr.CRE_DATE) AS [Cnt]
+FROM BOOK_LEND_RECORD blr
+WHERE YEAR(blr.LEND_DATE)=2019 --當年為2019
+GROUP BY DATEPART(QUARTER,blr.LEND_DATE);
+
+SELECT * FROM SPAN_TABLE st;
+--4.撈出每個分類借閱數量前三名書本及數量
+SELECT *
+FROM        --rank()
+	(SELECT ROW_NUMBER() OVER(PARTITION BY bc.BOOK_CLASS_NAME ORDER BY COUNT(blr.LEND_DATE)DESC) AS [Seq], --rownum先做流水編號 再以book class name分割 以lend date排
+	bc.BOOK_CLASS_NAME AS [BookClass],
+	bd.BOOK_ID AS [BookId],
+	bd.BOOK_NAME AS [BookName],
+	COUNT(blr.LEND_DATE) AS [Cnt]
+	FROM BOOK_LEND_RECORD blr,BOOK_CLASS bc,BOOK_DATA bd
+	WHERE bc.BOOK_CLASS_ID=bd.BOOK_CLASS_ID
+	AND bd.BOOK_ID=blr.BOOK_ID
+	GROUP BY bc.BOOK_CLASS_NAME,bd.BOOK_ID,bd.BOOK_NAME) AS [Data]
+WHERE Data.Seq<=3;
+
+--5.請列出 2016, 2017, 2018, 2019 各書籍類別的借閱數量比較
+SELECT T.classId AS [ClassId],T.classname AS [ClassName], --用case when做轉至
+	   COUNT(CASE WHEN t.CntYear='2016' THEN 1 ELSE NULL END) AS [CNT2016],
+	   COUNT(CASE WHEN t.CntYear='2017' THEN 1 ELSE NULL END) AS [CNT2017],
+	   COUNT(CASE WHEN t.CntYear='2018' THEN 1 ELSE NULL END) AS [CNT2018],
+	   COUNT(CASE WHEN t.CntYear='2019' THEN 1 ELSE NULL END) AS [CNT2019]
+FROM
+	(SELECT bc.BOOK_CLASS_ID AS [classId],bc.BOOK_CLASS_NAME AS [classname],
+		YEAR(blr.CRE_DATE) AS [CntYear],COUNT(blr.BOOK_ID) AS [CNT]
+	 FROM BOOK_LEND_RECORD blr
+		INNER JOIN BOOK_DATA bd ON bd.BOOK_ID = blr.BOOK_ID
+		INNER JOIN BOOK_CLASS bc ON bc.BOOK_CLASS_ID = bd.BOOK_CLASS_ID
+		GROUP BY bc.BOOK_CLASS_ID,bc.BOOK_CLASS_NAME,blr.CRE_DATE) AS t
+GROUP BY t.classId,t.classname
+ORDER BY ClassId;
+
+--6.請使用 PIVOT 語法列出2016, 2017, 2018, 2019 各書籍類別的借閱數量比較
+SELECT p.ClassId AS [ClassId],p.Classname AS [ClassName],[p].[2016] AS [CNT2016],
+	  [p].[2017] AS [CNT2017], p.[2018] AS [CNT2018],p.[2019] AS [CNT2019]
+FROM
+	(SELECT bc.BOOK_CLASS_ID AS [classId],bc.BOOK_CLASS_NAME AS [classname],
+	    YEAR(blr.CRE_DATE) AS [CntYear],blr.LEND_DATE AS [CNT]
+	FROM BOOK_LEND_RECORD blr
+		INNER JOIN BOOK_DATA bd ON bd.BOOK_ID = blr.BOOK_ID 
+		INNER JOIN BOOK_CLASS bc ON bc.BOOK_CLASS_ID = bd.BOOK_CLASS_ID
+GROUP BY bc.BOOK_CLASS_ID,bc.BOOK_CLASS_NAME,blr.CRE_DATE,blr.LEND_DATE)t
+PIVOT(COUNT(t.CNT) FOR t.CntYear IN ([2016],[2017],[2018],[2019]))p
+ORDER BY ClassId;
+
+--7.請查詢出李四的借書紀錄
+SELECT bd.BOOK_ID AS [書本ID],
+	   CONVERT(VARCHAR,bd.BOOK_BOUGHT_DATE,111) AS [購書日期], --記得宣告長度 日期通常是10 --char會保存空值占空間
+	   CONVERT(VARCHAR,blr.LEND_DATE,111) AS [借閱日期],
+	   bc.BOOK_CLASS_ID + '-' + bc.BOOK_CLASS_NAME AS [書籍類別],
+	   mm.USER_ID + '-' + mm.USER_CNAME + '(' + mm.USER_ENAME + ')' AS [借閱人],
+	   bd.BOOK_STATUS + '-' + bc1.CODE_NAME AS [狀態],
+	   PARSENAME(CONVERT(VARCHAR,CONVERT(MONEY,bd.BOOK_AMOUNT),1),2) + '元'  AS [購書金額] --convert換算成varchar
+FROM BOOK_DATA bd
+	 INNER JOIN BOOK_LEND_RECORD blr ON blr.BOOK_ID=bd.BOOK_ID --當主要table
+	 INNER JOIN BOOK_CLASS bc ON bc.BOOK_CLASS_ID=bd.BOOK_CLASS_ID 
+	 INNER JOIN BOOK_CODE bc1 ON bc1.CODE_ID=bd.BOOK_STATUS
+	 INNER JOIN MEMBER_M mm ON mm.[USER_ID]=blr.KEEPER_ID
+WHERE mm.[USER_ID]='0002'
+ORDER BY bd.BOOK_AMOUNT DESC;
+
+--8.新增一筆借閱紀錄，借書人為李四，書本ID為2004，並修改借閱日期為2019/01/02
+SET IDENTITY_INSERT BOOK_LEND_RECORD ON --更改資料庫要用transation
+INSERT INTO BOOK_LEND_RECORD(IDENTITY_FILED,BOOK_ID,KEEPER_ID,LEND_DATE,CRE_DATE,CRE_USR,MOD_DATE,MOD_USR)
+VALUES (1162,2004,'0002','2019-01-02 00:00:00.000','2019-01-02 00:00:00.000','0002','2019-01-02 00:00:00.000','0002'); --如果欄位有開identity(1,1) 可不用key Identity_Filed --Identity通常是唯一值
+
+--9.請將題9新增的借閱紀錄(書本ID=2004)刪除
+DELETE FROM BOOK_LEND_RECORD WHERE IDENTITY_FILED=1162; --危險的控制儘量放在一起防止手賤
